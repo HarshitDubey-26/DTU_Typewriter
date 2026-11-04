@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.spec
+venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+Thumbs.db
+.DS_Store
+*.log
+bootstrap.py
+bootstrap_final.py
