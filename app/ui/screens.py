@@ -337,34 +337,70 @@ class InstructionsScreen:
 #  SCREEN 3 — TYPING TEST
 # ================================================================
 class TypingTestScreen:
-    """Reference paragraph at top, typing area below, START button, live stats."""
+    """Reference paragraph at top, typing area below, START button, live stats.
+
+    Supports continuous auto-scrolling with lookahead preview, automatic state restoration
+    from autosaved drafts (in case of sudden crashes or power cuts), and keystroke tracking.
+    """
 
     def __init__(self, parent: tk.Tk, paragraph_title: str,
                  paragraph_content: str, duration_sec: int,
                  allow_backspace: bool,
-                 on_test_complete):
+                 on_test_complete,
+                 on_change=None,
+                 draft: dict = None):
         """
         Parameters
         ----------
         on_test_complete : callable(typed_text, elapsed_sec, error_count,
                                     correct_keystrokes, total_keystrokes)
+        on_change : callable or None
+            Invoked on keystrokes/backspace to trigger autosave.
+        draft : dict or None
+            Optional previous draft dict for recovery.
         """
         self.parent = parent
-        self.reference = paragraph_content
+        self.on_test_complete = on_test_complete
+        self.on_change = on_change
+        self.draft = draft
         self.duration_sec = duration_sec
         self.allow_backspace = allow_backspace
-        self.on_test_complete = on_test_complete
 
-        # Typing state
-        self._cursor_pos = 0          # authoritative position in reference
-        self._error_count = 0         # total incorrect keystrokes ever
-        self._correct_keystrokes = 0  # correct keystrokes ever
-        self._total_keystrokes = 0    # every character entry attempt
-        self._is_error_locked = False
-        self._remaining = duration_sec
+        # Normalize line endings to avoid off-by-one errors with Tkinter Text widget
+        self.reference = paragraph_content.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Typing state & draft restoration
+        if draft:
+            initial_typed = draft.get("typed_text", "").replace("\r\n", "\n").replace("\r", "\n")
+            self._initial_typed = initial_typed
+            self._cursor_pos = len(initial_typed)
+            self._error_count = draft.get("errors", 0)
+            self._remaining = draft.get("remaining_seconds", duration_sec)
+            self._initial_elapsed = max(0, duration_sec - self._remaining)
+
+            # Reconstruct keystroke counts
+            comp_len = min(len(initial_typed), len(self.reference))
+            self._correct_keystrokes = sum(
+                1 for i in range(comp_len) if initial_typed[i] == self.reference[i]
+            )
+            self._total_keystrokes = len(initial_typed) + self._error_count
+            self._is_error_locked = False
+            if self._cursor_pos > 0 and self._cursor_pos <= len(self.reference):
+                if initial_typed[-1] != self.reference[self._cursor_pos - 1]:
+                    self._is_error_locked = True
+        else:
+            self._initial_typed = ""
+            self._cursor_pos = 0          # authoritative position in reference
+            self._error_count = 0         # total incorrect keystrokes ever
+            self._correct_keystrokes = 0  # correct keystrokes ever
+            self._total_keystrokes = 0    # every character entry attempt
+            self._is_error_locked = False
+            self._remaining = duration_sec
+            self._initial_elapsed = 0
+
         self._timer_id = None
         self._test_active = False
-        self._test_started = False    # START button not yet clicked
+        self._test_started = False        # START button not yet clicked
         self._submitted = False
         self._start_time = None
 
@@ -390,7 +426,7 @@ class TypingTestScreen:
         timer_frame = tk.Frame(top_bar, bg=COLORS["card_bg"])
         timer_frame.pack(side=tk.RIGHT, padx=24)
 
-        self.timer_var = tk.StringVar(value=self._format_time(self.duration_sec))
+        self.timer_var = tk.StringVar(value=self._format_time(self._remaining))
         tk.Label(
             timer_frame, text="⏱", font=("Segoe UI", 16),
             bg=COLORS["card_bg"], fg=COLORS["timer_fg"],
@@ -421,9 +457,10 @@ class TypingTestScreen:
         self.bottom_bar = tk.Frame(main_area, bg=COLORS["bg"])
         self.bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 4))
 
+        btn_text = "▶   RESUME TYPING TEST" if self.draft else "▶   START TYPING TEST"
         self.start_btn = tk.Button(
             self.bottom_bar,
-            text="▶   START TYPING TEST",
+            text=btn_text,
             font=("Segoe UI", 15, "bold"),
             bg=COLORS["start_green"], fg=COLORS["white"],
             activebackground=COLORS["start_green_h"],
@@ -454,6 +491,12 @@ class TypingTestScreen:
         )
         self.ref_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ref_scroll.config(command=self.ref_text.yview)
+
+        # Mousewheel binding on reference text for fluid scrolling
+        def _on_ref_mousewheel(event):
+            self.ref_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+        self.ref_text.bind("<MouseWheel>", _on_ref_mousewheel)
 
         # Configure tags for reference text colouring
         self.ref_text.tag_configure("correct", foreground=COLORS["correct"])
@@ -490,13 +533,31 @@ class TypingTestScreen:
         self.type_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         type_scroll.config(command=self.type_text.yview)
 
+        # Mousewheel binding on typing text
+        def _on_type_mousewheel(event):
+            self.type_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+        self.type_text.bind("<MouseWheel>", _on_type_mousewheel)
+
         # Configure tags for typed text colouring
         self.type_text.tag_configure("correct", foreground=COLORS["correct"])
         self.type_text.tag_configure("incorrect", foreground=COLORS["error"],
                                      background=COLORS["error_bg"], underline=True)
 
-        # Initially disabled
-        self.type_text.config(state=tk.DISABLED)
+        # Populate restored typed text if resuming from draft
+        if self._initial_typed:
+            self.type_text.config(state=tk.NORMAL)
+            for i, ch in enumerate(self._initial_typed):
+                if i < len(self.reference) and ch == self.reference[i]:
+                    self.type_text.insert("end", ch, "correct")
+                else:
+                    self.type_text.insert("end", ch, "incorrect")
+            self._update_ref_highlight()
+            self.type_text.mark_set("insert", "end-1c")
+            self.type_text.see("end-1c")
+            self.type_text.config(state=tk.DISABLED)
+        else:
+            self.type_text.config(state=tk.DISABLED)
 
         # Bind key events on the type_text widget
         self.type_text.bind("<Key>", self._on_key)
@@ -526,14 +587,19 @@ class TypingTestScreen:
         # Highlight typing box border
         self.type_card.config(highlightbackground=COLORS["accent"], highlightthickness=2)
 
-        # Enable typing area, clear text, and focus cursor
+        # Enable typing area and focus cursor
         self.type_text.config(state=tk.NORMAL)
-        self.type_text.delete("1.0", "end")
+        if not self._initial_typed:
+            self.type_text.delete("1.0", "end")
+            self.type_text.mark_set("insert", "1.0")
+        else:
+            self.type_text.mark_set("insert", "end-1c")
+            self.type_text.see("end-1c")
+
         self.type_text.focus_set()
         self.type_text.focus_force()
-        self.type_text.mark_set("insert", "1.0")
 
-        # Highlight the first character in reference
+        # Highlight the current character in reference
         self._update_ref_highlight()
 
         # Begin the test & timer
@@ -566,11 +632,11 @@ class TypingTestScreen:
         if not self._test_active:
             return
         elapsed = time.time() - self._start_time
-        self._remaining = max(0, self.duration_sec - int(elapsed))
+        self._remaining = max(0, self.duration_sec - self._initial_elapsed - int(elapsed))
         self.timer_var.set(self._format_time(self._remaining))
 
         # Update live WPM & accuracy
-        self._update_live_stats(elapsed)
+        self._update_live_stats(self._initial_elapsed + elapsed)
 
         if self._remaining <= 0:
             self._finish_test()
@@ -653,12 +719,16 @@ class TypingTestScreen:
             self._cursor_pos += 1
             self._is_error_locked = True
 
-        # Update reference highlighting
+        # Update reference highlighting & auto-scroll
         self._update_ref_highlight()
 
-        # Force cursor to end
+        # Force cursor to end and auto-scroll typing space
         self.type_text.mark_set("insert", "end-1c")
-        self.type_text.see("end")
+        self.type_text.see("end-1c")
+
+        # Notify continuous autosave
+        if self.on_change:
+            self.on_change()
 
         # Check paragraph completion
         if self._cursor_pos >= len(self.reference) and not self._is_error_locked:
@@ -678,6 +748,9 @@ class TypingTestScreen:
             self._is_error_locked = False
             self._update_ref_highlight()
             self.type_text.mark_set("insert", "end-1c")
+            self.type_text.see("end-1c")
+            if self.on_change:
+                self.on_change()
             return "break"
 
         # If backspace is allowed in settings, allow deleting correct chars
@@ -686,12 +759,15 @@ class TypingTestScreen:
             self._cursor_pos -= 1
             self._update_ref_highlight()
             self.type_text.mark_set("insert", "end-1c")
+            self.type_text.see("end-1c")
+            if self.on_change:
+                self.on_change()
             return "break"
 
         # Backspace not allowed in settings and not error-locked
         return "break"
 
-    # ── Reference highlighting ──────────────────────────────────
+    # ── Reference highlighting & Lookahead Auto-Scroll ──────────
     def _update_ref_highlight(self):
         self.ref_text.config(state=tk.NORMAL)
 
@@ -717,9 +793,15 @@ class TypingTestScreen:
             else:
                 self.ref_text.tag_add("untyped", start_idx, end_idx)
 
-        # Keep current position in view
+        # Auto-scroll reference text:
+        # Keep upcoming text (lookahead 60 characters, approx 1-2 lines) in view so that
+        # when a sentence wraps or finishes, the student can always comfortably read ahead.
         if self._cursor_pos < len(self.reference):
+            lookahead = min(len(self.reference), self._cursor_pos + 60)
+            self.ref_text.see(f"1.0+{lookahead}c")
             self.ref_text.see(f"1.0+{self._cursor_pos}c")
+        else:
+            self.ref_text.see("end")
 
         self.ref_text.config(state=tk.DISABLED)
 
@@ -731,19 +813,23 @@ class TypingTestScreen:
         self._test_active = False
 
         if self._timer_id:
-            self.parent.after_cancel(self._timer_id)
+            try:
+                self.parent.after_cancel(self._timer_id)
+            except Exception:
+                pass
             self._timer_id = None
 
         # Disable typing
         self.type_text.config(state=tk.DISABLED)
 
-        elapsed = time.time() - self._start_time if self._start_time else 0
-        elapsed = max(1, int(elapsed))
+        session_elapsed = time.time() - self._start_time if self._start_time else 0
+        total_elapsed = self._initial_elapsed + int(session_elapsed)
+        total_elapsed = max(1, total_elapsed)
 
         typed = self.type_text.get("1.0", "end-1c")
 
         self.on_test_complete(
-            typed, elapsed, self._error_count,
+            typed, total_elapsed, self._error_count,
             self._correct_keystrokes, self._total_keystrokes,
         )
 
@@ -755,7 +841,10 @@ class TypingTestScreen:
 
     def destroy(self):
         if self._timer_id:
-            self.parent.after_cancel(self._timer_id)
+            try:
+                self.parent.after_cancel(self._timer_id)
+            except Exception:
+                pass
             self._timer_id = None
         self._test_active = False
         self.frame.destroy()
@@ -765,15 +854,20 @@ class TypingTestScreen:
 #  SCREEN 4 — RESULTS DASHBOARD
 # ================================================================
 class ResultsScreen:
-    """Typing test result dashboard with prominent metric cards."""
+    """Typing test result dashboard with prominent candidate greeting and PDF report download."""
 
     def __init__(self, parent: tk.Tk, student_name: str, result: dict,
+                 student_roll: str = "",
                  on_retake=None, on_instructions=None, on_close=None):
         """
         Parameters
         ----------
+        student_name : str
+            Candidate full name.
         result : dict
-            Keys: wpm, accuracy, errors, time_taken, status
+            Keys: wpm, accuracy, kdph, errors, time_taken, assigned_paragraph, typed_text, status
+        student_roll : str
+            Candidate roll number or ID.
         on_retake : callable or None
             Callback to retake the test immediately with a new paragraph.
         on_instructions : callable or None
@@ -782,65 +876,107 @@ class ResultsScreen:
             Callback to close the application.
         """
         self.parent = parent
+        self.student_name = student_name
+        self.result = result if isinstance(result, dict) else {}
+        self.student_roll = student_roll or self.result.get("student_roll", "")
         self.frame = tk.Frame(parent, bg=COLORS["bg"])
         self.frame.pack(fill=tk.BOTH, expand=True)
-        self._build(student_name, result, on_retake, on_instructions, on_close)
+        self._build(on_retake, on_instructions, on_close)
 
-    def _build(self, student_name, result, on_retake, on_instructions, on_close):
+    def _build(self, on_retake, on_instructions, on_close):
         # Centre container
         container = tk.Frame(self.frame, bg=COLORS["bg"])
         container.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Title
+        # Success badge / icon
         tk.Label(
-            container, text="Typing Test Completed",
-            font=("Segoe UI", 28, "bold"),
+            container, text="🎉",
+            font=("Segoe UI Emoji", 32),
+            bg=COLORS["bg"], fg=COLORS["accent"],
+        ).pack(pady=(0, 4))
+
+        # 1. Prominent Greeting with Candidate Name
+        tk.Label(
+            container, text=f"Thank You, {self.student_name}!",
+            font=("Segoe UI", 26, "bold"),
             bg=COLORS["bg"], fg=COLORS["white"],
-        ).pack(pady=(0, 6))
+        ).pack(pady=(0, 4))
 
-        # Student name
+        # Candidate ID / Roll Number
+        id_display = self.student_roll if self.student_roll else "N/A"
         tk.Label(
-            container, text=f"Candidate: {student_name}",
-            font=("Segoe UI", 13),
-            bg=COLORS["bg"], fg=COLORS["fg_muted"],
-        ).pack(pady=(0, 24))
+            container, text=f"Student ID: {id_display}",
+            font=("Segoe UI", 13, "bold"),
+            bg=COLORS["bg"], fg=COLORS["accent"],
+        ).pack(pady=(0, 20))
 
-        # ── Metric cards (Only WPM and Accuracy) ────────────────
+        # ── Metric cards (WPM, Accuracy, KDPH) ──────────────────
         cards_frame = tk.Frame(container, bg=COLORS["bg"])
-        cards_frame.pack(pady=(0, 28))
+        cards_frame.pack(pady=(0, 16))
 
-        wpm = result.get("wpm", 0)
-        accuracy = result.get("accuracy", 0)
+        wpm = float(self.result.get("wpm", 0.0))
+        accuracy = float(self.result.get("accuracy", 0.0))
+        kdph = float(self.result.get("kdph", 0.0))
+        errors = int(self.result.get("errors", 0))
+        time_taken = int(self.result.get("time_taken", 0))
+        total_keys = int(self.result.get("total_keystrokes", 0))
 
         row = tk.Frame(cards_frame, bg=COLORS["bg"])
         row.pack()
 
         self._metric_card(row, "WORDS PER MINUTE", f"{wpm:.1f}",
-                          COLORS["correct"], side=tk.LEFT, width=280, height=150, val_size=38)
+                          COLORS["correct"], side=tk.LEFT, width=190, height=125, val_size=32)
         self._metric_card(row, "ACCURACY", f"{accuracy:.1f}%",
-                          COLORS["accent"], side=tk.LEFT, width=280, height=150, val_size=38)
+                          COLORS["accent"], side=tk.LEFT, width=190, height=125, val_size=32)
+        self._metric_card(row, "KDPH (KEYS / HR)", f"{kdph:,.1f}",
+                          COLORS["gold"], side=tk.LEFT, width=210, height=125, val_size=30)
 
-        # ── Buttons row ─────────────────────────────────────────
+        # Small summary info chips
+        mins, secs = divmod(time_taken, 60)
+        time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+        info_chip = tk.Label(
+            container,
+            text=f"⏱ Time: {time_str}   •   ❌ Errors: {errors}   •   ⌨ Keystrokes: {total_keys}",
+            font=("Segoe UI", 11),
+            bg=COLORS["bg"], fg=COLORS["fg_muted"],
+        )
+        info_chip.pack(pady=(0, 18))
+
+        # ── Primary Action: DOWNLOAD YOUR REPORT (PDF) ──────────
+        report_frame = tk.Frame(container, bg=COLORS["bg"])
+        report_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.download_btn = tk.Button(
+            report_frame,
+            text="📥   DOWNLOAD YOUR REPORT (PDF)",
+            font=("Segoe UI", 14, "bold"),
+            bg="#2563eb", fg=COLORS["white"],
+            activebackground="#3b82f6", activeforeground=COLORS["white"],
+            relief=tk.FLAT, bd=0, cursor="hand2",
+            padx=28,
+            command=self._handle_download_report,
+        )
+        self.download_btn.pack(fill=tk.X, ipady=13)
+
+        self.download_status = tk.StringVar(
+            value="Click to generate and open your official PDF evaluation report."
+        )
+        self.status_label = tk.Label(
+            report_frame,
+            textvariable=self.download_status,
+            font=("Segoe UI", 10),
+            bg=COLORS["bg"], fg=COLORS["fg_muted"],
+        )
+        self.status_label.pack(pady=(6, 12))
+
+        # ── Secondary Buttons Row ───────────────────────────────
         btn_frame = tk.Frame(container, bg=COLORS["bg"])
-        btn_frame.pack(pady=(0, 8))
+        btn_frame.pack(pady=(4, 8))
 
-        # Retake Test button (prominent primary)
+        # Retake Test button
         if on_retake:
             tk.Button(
                 btn_frame, text="🔄  RETAKE TEST",
-                font=("Segoe UI", 13, "bold"),
-                bg=COLORS["accent"], fg=COLORS["white"],
-                activebackground=COLORS["accent_hover"],
-                activeforeground=COLORS["white"],
-                relief=tk.FLAT, bd=0, cursor="hand2",
-                padx=36, pady=0,
-                command=on_retake,
-            ).pack(side=tk.LEFT, padx=8, ipady=12)
-
-        # View Instructions button (secondary)
-        if on_instructions:
-            tk.Button(
-                btn_frame, text="📋  INSTRUCTIONS",
                 font=("Segoe UI", 11, "bold"),
                 bg=COLORS["card_bg"], fg=COLORS["fg"],
                 activebackground=COLORS["input_bg"],
@@ -849,10 +985,25 @@ class ResultsScreen:
                 highlightthickness=1,
                 relief=tk.FLAT, bd=0, cursor="hand2",
                 padx=24, pady=0,
-                command=on_instructions,
-            ).pack(side=tk.LEFT, padx=8, ipady=12)
+                command=on_retake,
+            ).pack(side=tk.LEFT, padx=6, ipady=10)
 
-        # Close/Exit button (muted)
+        # View Instructions button
+        if on_instructions:
+            tk.Button(
+                btn_frame, text="📋  INSTRUCTIONS",
+                font=("Segoe UI", 11),
+                bg=COLORS["card_bg"], fg=COLORS["fg"],
+                activebackground=COLORS["input_bg"],
+                activeforeground=COLORS["white"],
+                highlightbackground=COLORS["card_border"],
+                highlightthickness=1,
+                relief=tk.FLAT, bd=0, cursor="hand2",
+                padx=20, pady=0,
+                command=on_instructions,
+            ).pack(side=tk.LEFT, padx=6, ipady=10)
+
+        # Close/Exit button
         if on_close:
             tk.Button(
                 btn_frame, text="🚪  EXIT",
@@ -861,9 +1012,48 @@ class ResultsScreen:
                 activebackground=COLORS["input_bg"],
                 activeforeground=COLORS["fg"],
                 relief=tk.FLAT, bd=0, cursor="hand2",
-                padx=20, pady=0,
+                padx=18, pady=0,
                 command=on_close,
-            ).pack(side=tk.LEFT, padx=8, ipady=12)
+            ).pack(side=tk.LEFT, padx=6, ipady=10)
+
+    def _handle_download_report(self):
+        """Generate PDF report with all metrics and open it for the user."""
+        import os
+        from tkinter import filedialog, messagebox
+        from app.services.pdf_report import generate_typing_report, open_pdf_file
+
+        roll_clean = "".join(c for c in self.student_roll if c.isalnum() or c in ("-", "_")) or "Candidate"
+        default_name = f"Typing_Report_{roll_clean}.pdf"
+
+        filepath = filedialog.asksaveasfilename(
+            parent=self.parent,
+            title="Download Typing Evaluation Report",
+            defaultextension=".pdf",
+            initialfile=default_name,
+            filetypes=[("PDF Document (*.pdf)", "*.pdf"), ("All Files", "*.*")],
+        )
+        if not filepath:
+            return
+
+        try:
+            report_data = dict(self.result)
+            report_data["student_name"] = self.student_name
+            report_data["student_roll"] = self.student_roll
+
+            out_path = generate_typing_report(filepath, report_data)
+            self.download_status.set(f"✔ Saved: {os.path.basename(out_path)}")
+            open_pdf_file(out_path)
+            messagebox.showinfo(
+                "Report Ready",
+                f"Your official evaluation report has been saved and opened:\n\n{out_path}",
+                parent=self.parent,
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Export Error",
+                f"Could not generate PDF report:\n{exc}",
+                parent=self.parent,
+            )
 
     def _metric_card(self, parent, label, value, color, side, width=180, height=110, val_size=26):
         card = tk.Frame(

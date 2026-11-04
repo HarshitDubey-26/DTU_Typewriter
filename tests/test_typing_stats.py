@@ -42,6 +42,18 @@ class TestTypingStatsService:
         # 80 correct out of 100 total = 80%
         assert self.svc.calculate_accuracy(80, 100) == 80.0
 
+    # KDPH (Key Depressions Per Hour)
+    def test_kdph_basic(self):
+        # 1500 keystrokes in 600 seconds (10 min) -> (1500 / 600) * 3600 = 9000 KDPH
+        assert self.svc.calculate_kdph(1500, 600) == 9000.0
+
+    def test_kdph_zero_elapsed(self):
+        assert self.svc.calculate_kdph(100, 0) == 0.0
+
+    def test_kdph_one_minute(self):
+        # 300 keystrokes in 60 seconds -> (300 / 60) * 3600 = 18000 KDPH
+        assert self.svc.calculate_kdph(300, 60) == 18000.0
+
     # compare_texts
     def test_compare_texts_perfect(self):
         correct, total, errors = self.svc.compare_texts("hello", "hello")

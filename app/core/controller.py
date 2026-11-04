@@ -10,6 +10,7 @@ Implements the four-screen workflow:
 * Starts the background DatabaseWorker.
 * Maps UI events to DB tasks.
 * Dispatches worker results back to the UI.
+* Manages draft recovery and continuous autosave.
 """
 import queue
 import logging
@@ -20,6 +21,7 @@ from app.workers.db_worker import DatabaseWorker
 from app.workers.task_queue import DBTask, Result
 from app.services.typing_stats import TypingStatsService
 from app.services.autosave import AutosaveService
+from app.services.recovery import RecoveryService
 
 logger = logging.getLogger("dtu_typewriter.controller")
 
@@ -31,14 +33,16 @@ class AppController:
         self.result_queue: queue.Queue = queue.Queue()
         self.db_worker = DatabaseWorker(self.task_queue, self.result_queue)
         self.stats_service = TypingStatsService()
-        self.autosave = AutosaveService(root, self, interval_ms=3000)
+        self.autosave = AutosaveService(root, self, interval_ms=1500, periodic_ms=2000)
+        self.recovery_service = RecoveryService(self)
 
         # Session state
-        self.current_student = None   # dict with id, name, roll_no, …
+        self.current_student = None    # dict with id, name, roll_no, …
         self.current_paragraph = None  # dict with id, title, content
         self.test_running = False
         self._test_settings = {"duration_sec": 60, "allow_backspace": True}
         self._result_submitted = False
+        self._pending_draft = None
 
         # Current screen reference (for cleanup)
         self._current_screen = None
@@ -100,13 +104,16 @@ class AppController:
                 self._test_settings = r.data
         elif cb == "student_looked_up":
             self._on_student_lookup(r.data)
+        elif cb == "draft_checked":
+            self._on_draft_checked(r.data)
+        elif cb == "paragraph_loaded_for_resume":
+            self._on_paragraph_for_resume(r.data)
         elif cb == "paragraphs_loaded":
             self._on_paragraphs(r.data)
         elif cb == "draft_saved":
             pass  # silent
         elif cb == "result_saved":
             self._on_result_saved(r.data)
-        # (future callbacks can be added here)
 
     # ────────────────────────────────────────────────────────────
     #  Screen management
@@ -128,7 +135,7 @@ class AppController:
         self._current_screen = LoginScreen(self.root, on_login=self._do_login)
 
     def _do_login(self, roll_no: str):
-        """Called when user clicks LOGIN.  Queries DB for the student."""
+        """Called when user clicks LOGIN. Queries DB for the student."""
         self._enqueue(
             "get_student_by_roll",
             {"roll_no": roll_no},
@@ -143,11 +150,63 @@ class AppController:
                     "Student ID not found. Please check and try again."
                 )
             return
-        # Success — store student, navigate to instructions
+        # Success — store student and check for recoverable draft
         self.current_student = data
         logger.info("Student logged in: %s (%s)",
                     data["name"], data["roll_no"])
+        self.load_draft(self.current_student["id"])
+
+    # ────────────────────────────────────────────────────────────
+    #  Draft Recovery check after login
+    # ────────────────────────────────────────────────────────────
+    def load_draft(self, student_id: int):
+        self._enqueue("get_draft", {"student_id": student_id}, "draft_checked")
+
+    def _on_draft_checked(self, draft):
+        if draft and draft.get("remaining_seconds", 0) > 0 and draft.get("typed_text"):
+            # An unfinished session exists! Ask candidate if they want to resume
+            student_name = self.current_student.get("name", "Student")
+            remaining = draft.get("remaining_seconds", 0)
+            mins, secs = divmod(remaining, 60)
+            time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+            chars = len(draft.get("typed_text", ""))
+
+            resume = messagebox.askyesno(
+                "Resume Incomplete Test?",
+                f"Welcome back, {student_name}!\n\n"
+                f"An incomplete typing test was detected from your previous session\n"
+                f"(e.g. interrupted by a sudden power cut, crash, or shutdown).\n\n"
+                f"• Characters typed: {chars}\n"
+                f"• Time remaining: {time_str}\n\n"
+                f"Would you like to RESUME your test from where you left off?\n\n"
+                f"Click 'Yes' to Resume, or 'No' to discard and start a new test.",
+                parent=self.root,
+            )
+            if resume:
+                self._pending_draft = draft
+                self._enqueue(
+                    "get_paragraph",
+                    {"paragraph_id": draft["paragraph_id"]},
+                    "paragraph_loaded_for_resume",
+                )
+                return
+            else:
+                # Discard stale draft
+                self._enqueue("delete_draft", {"student_id": self.current_student["id"]})
+
+        # No draft or discarded: proceed to instructions
         self._show_instructions_screen()
+
+    def _on_paragraph_for_resume(self, para):
+        if not para or not self._pending_draft:
+            self._show_error("Paragraph Not Found", "The saved test paragraph could not be loaded. Starting fresh.")
+            self._enqueue("delete_draft", {"student_id": self.current_student["id"]})
+            self._show_instructions_screen()
+            return
+        self.current_paragraph = para
+        draft = self._pending_draft
+        self._pending_draft = None
+        self._show_typing_test_screen(draft=draft)
 
     # ────────────────────────────────────────────────────────────
     #  SCREEN 2 — Instructions
@@ -185,7 +244,7 @@ class AppController:
     # ────────────────────────────────────────────────────────────
     #  SCREEN 3 — Typing Test
     # ────────────────────────────────────────────────────────────
-    def _show_typing_test_screen(self):
+    def _show_typing_test_screen(self, draft=None):
         from app.ui.screens import TypingTestScreen
         self._destroy_current_screen()
         self.test_running = True
@@ -201,7 +260,10 @@ class AppController:
             duration_sec=duration,
             allow_backspace=allow_bs,
             on_test_complete=self._on_test_complete,
+            on_change=self.autosave.mark_dirty,
+            draft=draft,
         )
+        self.autosave.start_periodic()
 
     def _on_test_complete(self, typed_text, elapsed_sec, error_count,
                           correct_keystrokes, total_keystrokes):
@@ -210,6 +272,7 @@ class AppController:
             return
         self._result_submitted = True
         self.test_running = False
+        self.autosave.stop()
 
         # Calculate stats
         wpm = self.stats_service.calculate_net_wpm(
@@ -217,6 +280,9 @@ class AppController:
         )
         accuracy = self.stats_service.calculate_accuracy(
             correct_keystrokes, total_keystrokes
+        )
+        kdph = self.stats_service.calculate_kdph(
+            total_keystrokes, elapsed_sec
         )
 
         # Save to DB
@@ -229,18 +295,26 @@ class AppController:
             "time_taken": elapsed_sec,
         }, "result_saved")
 
-        # Delete draft after successful submission
+        # Delete draft after successful completion
         self._enqueue("delete_draft", {
             "student_id": self.current_student["id"],
         })
 
-        # Store result for the results screen
+        # Store complete result for the results screen & PDF report
         self._pending_result = {
             "wpm": wpm,
             "accuracy": accuracy,
+            "kdph": kdph,
             "errors": error_count,
+            "correct_keystrokes": correct_keystrokes,
+            "total_keystrokes": total_keystrokes,
             "time_taken": elapsed_sec,
             "status": "Completed",
+            "student_name": self.current_student.get("name", "Student") if self.current_student else "Student",
+            "student_roll": self.current_student.get("roll_no", "N/A") if self.current_student else "N/A",
+            "paragraph_title": self.current_paragraph.get("title", "Typing Exercise") if self.current_paragraph else "Typing Exercise",
+            "assigned_paragraph": self.current_paragraph.get("content", "") if self.current_paragraph else "",
+            "typed_text": typed_text,
         }
 
     def _on_result_saved(self, data):
@@ -256,15 +330,23 @@ class AppController:
         from app.ui.screens import ResultsScreen
         self._destroy_current_screen()
 
+        student_name = self.current_student.get("name", "Student") if self.current_student else "Student"
+        student_roll = self.current_student.get("roll_no", "N/A") if self.current_student else "N/A"
+
         result = getattr(self, "_pending_result", {
-            "wpm": 0, "accuracy": 0, "errors": 0,
+            "wpm": 0, "accuracy": 0, "kdph": 0, "errors": 0,
             "time_taken": 0, "status": "Unknown",
+            "student_name": student_name,
+            "student_roll": student_roll,
+            "assigned_paragraph": "",
+            "typed_text": "",
         })
 
         self._current_screen = ResultsScreen(
             self.root,
-            student_name=self.current_student["name"],
+            student_name=student_name,
             result=result,
+            student_roll=student_roll,
             on_retake=self._on_retake,
             on_instructions=self._show_instructions_screen,
             on_close=self._on_close,
@@ -278,12 +360,16 @@ class AppController:
         self._on_proceed()
 
     # ────────────────────────────────────────────────────────────
-    #  Draft management / Autosave
+    #  Draft management / Continuous Autosave
     # ────────────────────────────────────────────────────────────
     def autosave_now(self):
+        if not self.test_running:
+            return
         if not self.current_student or not self.current_paragraph:
             return
         if not self._current_screen or not hasattr(self._current_screen, "get_typed_text"):
+            return
+        if not getattr(self._current_screen, "_test_started", False):
             return
         typed = self._current_screen.get_typed_text()
         remaining = getattr(self._current_screen, "_remaining", 0)
@@ -300,10 +386,10 @@ class AppController:
     #  Close / shutdown
     # ────────────────────────────────────────────────────────────
     def _on_close(self):
-        if self.test_running:
+        if self.test_running and getattr(self._current_screen, "_test_started", False):
             if not messagebox.askyesno(
                 "Quit?",
-                "A test is in progress. Your draft will be saved.\n"
+                "A test is currently in progress. Your draft will be saved.\n"
                 "Are you sure you want to quit?",
                 parent=self.root,
             ):

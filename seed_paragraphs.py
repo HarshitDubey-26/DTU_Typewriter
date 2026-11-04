@@ -11,13 +11,13 @@ PARAGRAPHS = [
         "The Quick Brown Fox",
         "The quick brown fox jumps over the lazy dog. "
         "Pack my box with five dozen liquor jugs. "
-        "How vexingly quick daft g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to zebras jump.",
+        "How vexingly quick daft zebras jump.",
     ),
     (
         "Technology and Progress",
         "Technology is best when it brings people together. "
         "The advance of technology is based on making it fit in "
-        "so that you do not rg the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to eally even notice it, so it is part "
+        "so that you do not really even notice it, so it is part "
         "of everyday life. Any sufficiently advanced technology "
         "is indistinguishable from magic.",
     ),
@@ -26,7 +26,7 @@ PARAGRAPHS = [
         "Delhi Technological University, formerly Delhi College "
         "of Engineering, is one of the premier technical "
         "universities in India. Established in 1941, it has a "
-        "rich history of academic excg the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to ellence and innovation. "
+        "rich history of academic excellence and innovation. "
         "The university offers undergraduate, postgraduate, and "
         "doctoral programmes across multiple disciplines.",
     ),
@@ -34,7 +34,7 @@ PARAGRAPHS = [
         "Importance of Typing",
         "Learning to type quickly and accurately is an essential "
         "skill in the modern digital world. Proficient typing "
-        "allows you to focus on yourg the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to  thoughts rather than the "
+        "allows you to focus on your thoughts rather than the "
         "mechanics of entering text. Regular practice is the key "
         "to improving both speed and accuracy over time.",
     ),
@@ -43,21 +43,30 @@ PARAGRAPHS = [
         "Computer science is the study of computation, automation, "
         "and information. It spans theoretical disciplines such as "
         "algorithms, theory of computation, and information theory "
-        "to applied disciplines includingg the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to g the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to  the design and implementation "
+        "to applied disciplines including the design and implementation "
         "of hardware and software.",
     ),
     (
-           "Computer Science",
-           "Computer science is the study of computation, automation, "
-           "and information. It spans theoretical disciplines such as "
-           "algorithms, theory of computation, and information theory "
-           "to applied disciplines including the design and implementation "
-           "to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation to applied disciplines including the design and implementation "
-           
-           "of hardware and software.",
-
-       ),
-      
+        "Artificial Intelligence",
+        "Artificial intelligence (AI) refers to the simulation of "
+        "human intelligence in machines that are programmed to think "
+        "like humans and mimic their actions. The term can also be "
+        "applied to any machine that exhibits traits associated with a "
+        "human mind, such as learning and problem-solving.",
+    ),
+    (
+        "Blockchain",
+        "Blockchain is a distributed, immutable ledger that enables "
+        "secure and transparent recording of transactions. It is a "
+        "chain of blocks, where each block contains a list of transactions "
+        "and a cryptographic hash of the previous block.",
+    ),
+    (
+        "Cloud Computing",
+        "Cloud computing is the on-demand availability of computer "
+        "system resources, especially data storage and computing power, "
+        "without direct active management by the user.",
+    ),
 ]
 
 

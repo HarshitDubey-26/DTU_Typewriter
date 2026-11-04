@@ -33,6 +33,16 @@ class TypingStatsService:
         return round((correct_keystrokes / total_keystrokes) * 100.0, 2)
 
     @staticmethod
+    def calculate_kdph(total_keystrokes: int, elapsed_seconds: float) -> float:
+        """Key Depressions Per Hour (KDPH) = (total_keystrokes / elapsed_seconds) * 3600.
+
+        Handles division-by-zero gracefully.
+        """
+        if elapsed_seconds <= 0:
+            return 0.0
+        return round((total_keystrokes / elapsed_seconds) * 3600.0, 1)
+
+    @staticmethod
     def compare_texts(reference: str, typed: str):
         """Character-level comparison of typed text against the reference.
 
@@ -52,3 +62,4 @@ class TypingStatsService:
         correct = sum(1 for i in range(length) if reference[i] == typed[i])
         errors = length - correct
         return correct, length, errors
+
